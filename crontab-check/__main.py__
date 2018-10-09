@@ -1,0 +1,63 @@
+import sys
+import argparse
+from crontab import CronTab
+from logging import getLogger
+from logging.config import fileConfig
+from datetime import datetime
+from os import path
+import json
+from alert import *
+
+fileConfig('logging.conf')
+logger = getLogger()
+
+logger.debug('script started')
+
+parser = argparse.ArgumentParser(description='system crontab file path')
+parser.add_argument('-f', type=str, dest='crontab_path', required='True',
+                    help='the file path of the crontab file')
+parser.add_argument('-u','--user', dest='user', type=str, default='root',
+                    help='linux username if the crontab is for specific user')
+
+args = parser.parse_args()
+logger.debug(args.crontab_path)
+# crontab_path = 
+
+def get_modified_time(filepath):
+    try:
+        if path.exists(filepath):
+            return path.getmtime(filepath)
+        else:
+            raise Exception('log file not found error')
+    except Exception as e:
+        logger.error('issue find with file {file} | {e}'.format(file=path, e=e))
+        return False
+
+def main():
+    logger.debug('in main function')
+    crons = CronTab(tabfile=args.crontab_path)
+    alerts = []
+    for job in crons:
+        if job.command.strip()[0] == '#':
+            continue
+        try:
+            prev_runtime = job.schedule(date_from=datetime.now()).get_prev().timestamp()
+            logger.info(f"{job} must be run at {prev_runtime}")
+            log_filepath = job.command.split('>>')[1].split('#')[0].strip()
+            logger.debug(f"log filepath is | {log_filepath}")
+            mtime = get_modified_time(log_filepath)
+            if mtime:
+                logger.info(f"log_filepath last updated at {mtime}")
+            else:
+                raise Exception(job.command)
+            
+            if mtime < prev_runtime:
+                raise Exception(f"{job.command} | is not working")
+        except Exception as e:
+            logger.error(e, exc_info=True)
+            alerts.append(str(e))
+    return alerts
+if __name__ == '__main__':
+    alert_msg = json.dumps(main())
+    alert = Alert(logger=logger)
+    alert.raiseAlert(alert_msg)
